@@ -765,7 +765,7 @@ def main():
     print("=== Whatfix Support Ticket Analyzer ===\n")
     
     # Initialize analyzer (using mock provider for demonstration)
-    analyzer = WhatfixTicketAnalyzer(llm_provider='gemini', api_key='AIzaSyALhyQQKEkcxA6hGe8v0dHmv_OvXCsai1A')
+    analyzer = WhatfixTicketAnalyzer(llm_provider='gemini')
     
     # Analyze the CSV file
     try:
