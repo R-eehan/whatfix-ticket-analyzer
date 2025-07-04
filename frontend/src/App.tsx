@@ -88,11 +88,11 @@ function App() {
           <div className="flex items-center gap-3 mb-2">
             <FileText className="h-8 w-8 text-blue-600" />
             <h1 className="text-3xl font-bold text-gray-900">
-              Whatfix Ticket Analyzer
+            Heimdall - Spot everything!
             </h1>
           </div>
           <p className="text-gray-600">
-            Analyze support tickets to identify opportunities for diagnostics automation
+            Analyze support tickets to identify issues & opportunities for customer conversations!
           </p>
         </div>
 

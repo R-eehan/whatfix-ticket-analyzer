@@ -12,6 +12,7 @@ import os
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
+import numpy as np
 
 # Import the existing ticket analyzer
 from ticket_analyzer import WhatfixTicketAnalyzer
@@ -143,9 +144,7 @@ async def run_analysis(analysis_id: str, file_path: str, llm_provider: str, api_
         analyzer.analysis_id = analysis_id
         
         # Run analysis
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
+        loop = asyncio.get_running_loop()
         results = await loop.run_in_executor(
             executor,
             analyzer.analyze_csv,
@@ -166,6 +165,21 @@ async def run_analysis(analysis_id: str, file_path: str, llm_provider: str, api_
             os.remove(file_path)
 
 
+def convert_numpy(obj):
+    if isinstance(obj, dict):
+        return {k: convert_numpy(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy(i) for i in obj]
+    elif isinstance(obj, (np.integer, np.int64)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    else:
+        return obj
+
+
 @app.get("/progress/{analysis_id}")
 async def get_progress(analysis_id: str):
     """
@@ -173,8 +187,8 @@ async def get_progress(analysis_id: str):
     """
     if analysis_id not in analysis_progress:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
-    
-    return analysis_progress[analysis_id]
+    progress = analysis_progress[analysis_id]
+    return convert_numpy(progress)
 
 
 @app.delete("/analysis/{analysis_id}")
