@@ -14,8 +14,8 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import numpy as np
 
-# Import the existing ticket analyzer
-from ticket_analyzer import WhatfixTicketAnalyzer
+# Import the new crew
+from .crew import TicketAnalysisCrew
 
 app = FastAPI(title="Whatfix Ticket Analyzer API")
 
@@ -108,48 +108,15 @@ async def analyze_tickets(
 
 async def run_analysis(analysis_id: str, file_path: str, llm_provider: str, api_key: str):
     """
-    Run the ticket analysis in background
+    Run the ticket analysis in background using crewAI
     """
     try:
-        # Create custom analyzer that reports progress
-        class ProgressAnalyzer(WhatfixTicketAnalyzer):
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args, **kwargs)
-                self.analysis_id = analysis_id
-            
-            def _process_all_tickets(self, df):
-                """Override to add progress tracking"""
-                grouped = df.groupby('Zendesk Tickets ID')
-                summaries = []
-                total_tickets = len(grouped)
-                
-                # Update total tickets
-                analysis_progress[self.analysis_id]["total_tickets"] = total_tickets
-                
-                for i, (ticket_id, ticket_comments) in enumerate(grouped):
-                    # Update progress
-                    analysis_progress[self.analysis_id]["current_ticket"] = i + 1
-                    analysis_progress[self.analysis_id]["progress_percentage"] = ((i + 1) / total_tickets) * 100
-                    
-                    # Process ticket
-                    ticket_data = self.processor.process_ticket_comments(ticket_comments)
-                    summary = self.processor.summarize_ticket(ticket_data)
-                    summary['author_email'] = self._extract_author_email(ticket_comments)
-                    summaries.append(summary)
-                
-                return summaries
-        
-        # Initialize analyzer
-        analyzer = ProgressAnalyzer(llm_provider=llm_provider, api_key=api_key)
-        analyzer.analysis_id = analysis_id
-        
-        # Run analysis
+        # Initialize and run the crew
+        crew = TicketAnalysisCrew(file_path, llm_provider, api_key)
         loop = asyncio.get_running_loop()
         results = await loop.run_in_executor(
             executor,
-            analyzer.analyze_csv,
-            file_path,
-            None  # No output directory needed
+            crew.run
         )
         
         # Update progress with results

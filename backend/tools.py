@@ -1,13 +1,6 @@
 """
-Whatfix Support Ticket Analyzer - Complete Backend Solution
-===========================================================
-This module provides a complete solution for analyzing Whatfix support tickets,
-summarizing issues, and determining diagnostics compatibility.
-
-Author: Whatfix Platform Team
-Version: 1.0.0
+Tools for the Whatfix Ticket Analyzer crew.
 """
-
 import pandas as pd
 import json
 import logging
@@ -21,6 +14,7 @@ from abc import ABC, abstractmethod
 import hashlib
 import google.generativeai as genai
 import numpy as np
+from crewai.tools import BaseTool
 
 # Configure logging
 logging.basicConfig(
@@ -132,7 +126,7 @@ class MockProvider(LLMProvider):
         })
     
 class GeminiAIProvider(LLMProvider):
-    def __init__(self, api_key: str, model: str = "gemini-2.5-flash"):
+    def __init__(self, api_key: str, model: str = "gemini-1.5-flash"):
         try:
             import google.generativeai as genai
             genai.configure(api_key=api_key)
@@ -150,7 +144,7 @@ class GeminiAIProvider(LLMProvider):
             full_prompt,
             generation_config= genai.types.GenerationConfig(
                 temperature=0.3,
-                max_output_tokens=10000,
+                max_output_tokens=1000,
             )
         )
         # Try to extract from candidates/parts if available
@@ -158,9 +152,6 @@ class GeminiAIProvider(LLMProvider):
             for candidate in response.candidates:
                 if hasattr(candidate, 'content') and candidate.content.parts:
                     result = "".join(part.text for part in candidate.content.parts if hasattr(part, 'text'))
-                    #print("Cleaning LLM response....")
-                    #cleaned_result = extract_json_from_code_block(result)
-                    #print(cleaned_result)
                     return result
         # Fallback: return a message or empty string
         return "[No valid response from Gemini API]"
@@ -296,10 +287,7 @@ Focus on:
             # Parse the JSON response
             try:
                 summary = json.loads(summary_json)
-                #print("Entering try block, printing summary of the tickets")
-                #print(summary)
             except json.JSONDecodeError:
-                print("Entering except block, something went wrong...")
                 summary = {
                     "issue": "Failed to parse LLM response",
                     "resolution": summary_json,
@@ -326,7 +314,6 @@ Focus on:
                 }
             }
             
-            print(result)
             return result
             
         except Exception as e:
@@ -534,106 +521,37 @@ class DiagnosticsAnalyzer:
 
 
 # ============================================================================
-# SECTION 4: MAIN ORCHESTRATOR
+# SECTION 4: TOOLS
 # ============================================================================
 
-class NumpyEncoder(json.JSONEncoder):
-    """Custom encoder for numpy data types"""
-    def default(self, obj):
-        if isinstance(obj, np.integer):
-            return int(obj)
-        elif isinstance(obj, np.floating):
-            return float(obj)
-        elif isinstance(obj, np.ndarray):
-            return obj.tolist()
-        return super(NumpyEncoder, self).default(obj)
+class TicketAnalysisTool(BaseTool):
+    name: str = "Ticket Analysis Tool"
+    description: str = "Analyzes a CSV file of support tickets, processes them, and returns a list of ticket summaries."
 
-class WhatfixTicketAnalyzer:
-    """Main class that orchestrates the entire ticket analysis process"""
-    
-    def __init__(self, llm_provider: str = 'mock', api_key: Optional[str] = None):
-        """
-        Initialize the analyzer with specified LLM provider
-        
-        Args:
-            llm_provider: 'openai', 'anthropic', or 'mock'
-            api_key: API key for the LLM provider (not needed for mock)
-        """
+    def _run(self, csv_path: str, llm_provider: str, api_key: str) -> List[Dict]:
         # Initialize LLM provider
         if llm_provider == 'openai':
-            if not api_key:
-                api_key = os.environ.get('OPENAI_API_KEY')
-            self.llm_provider = OpenAIProvider(api_key)
+            provider = OpenAIProvider(api_key)
         elif llm_provider == 'anthropic':
-            if not api_key:
-                api_key = os.environ.get('ANTHROPIC_API_KEY')
-            self.llm_provider = AnthropicProvider(api_key)
+            provider = AnthropicProvider(api_key)
         elif llm_provider == 'gemini':
-            if not api_key:
-                api_key = os.environ.get('GOOGLE_API_KEY')
-            self.llm_provider = GeminiAIProvider(api_key)
+            provider = GeminiAIProvider(api_key)
         else:
-            self.llm_provider = MockProvider()
+            provider = MockProvider()
         
-        # Initialize components
-        self.processor = TicketProcessor(self.llm_provider)
-        self.diagnostics_analyzer = DiagnosticsAnalyzer()
-        
-        logger.info(f"Initialized WhatfixTicketAnalyzer with {llm_provider} provider")
+        processor = TicketProcessor(provider)
 
-    def analyze_csv(self, csv_path: str, output_dir: Optional[str] = None) -> Dict:
-        """
-        Main method to analyze a CSV file of support tickets
-        
-        Args:
-            csv_path: Path to the CSV file
-            output_dir: Optional directory to save results
-            
-        Returns:
-            Dictionary containing complete analysis results
-        """
-        logger.info(f"Starting analysis of {csv_path}")
-        
-        # Validate CSV exists
+        # Read and validate CSV
         if not Path(csv_path).exists():
             raise FileNotFoundError(f"CSV file not found: {csv_path}")
         
-        # Read and validate CSV
         df = pd.read_csv(csv_path)
         self._validate_csv_columns(df)
-        
-        # Clean data
         df = self._clean_dataframe(df)
         
-        # Process tickets
-        ticket_summaries = self._process_all_tickets(df)
-        
-        # Analyze for diagnostics compatibility
-        diagnostics_analysis = self.diagnostics_analyzer.analyze_all_tickets(ticket_summaries)
-        
-        # Compile final results
-        results = {
-            'metadata': {
-                'analyzed_at': datetime.now().isoformat(),
-                'file_path': csv_path,
-                'llm_provider': type(self.llm_provider).__name__,
-                'total_raw_rows': len(df),
-                'unique_tickets': len(df['Zendesk Tickets ID'].unique())
-            },
-            'ticket_summaries': ticket_summaries,
-            'diagnostics_analysis': diagnostics_analysis,
-            'author_outreach_list': self._compile_outreach_list(
-                ticket_summaries, 
-                diagnostics_analysis['diagnostics_compatible_tickets']
-            )
-        }
-        
-        # Save results if output directory specified
-        if output_dir:
-            self._save_results(results, output_dir)
-        
-        logger.info("Analysis complete!")
-        return results
+        # Process all tickets
+        summaries = self._process_all_tickets(df, processor)
+        return summaries
 
     def _validate_csv_columns(self, df: pd.DataFrame):
         """Validate required columns exist"""
@@ -651,43 +569,26 @@ class WhatfixTicketAnalyzer:
 
     def _clean_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
         """Clean and preprocess the dataframe"""
-        # Handle missing values
         df['Zendesk Comments Body'] = df['Zendesk Comments Body'].fillna('')
         df['Zendesk Tickets Subject'] = df['Zendesk Tickets Subject'].fillna('No Subject')
         df['Zendesk Tickets Root Cause'] = df['Zendesk Tickets Root Cause'].fillna('Not Specified')
-        
-        # Remove duplicate comment IDs
         df = df.drop_duplicates(subset=['Zendesk Comments ID'], keep='first')
-        
-        # Convert IDs to integers
         df['Zendesk Tickets ID'] = pd.to_numeric(df['Zendesk Tickets ID'], errors='coerce')
         df['Zendesk Comments ID'] = pd.to_numeric(df['Zendesk Comments ID'], errors='coerce')
-        
-        # Remove invalid rows
         df = df.dropna(subset=['Zendesk Tickets ID', 'Zendesk Comments ID'])
-        
         return df
 
-    def _process_all_tickets(self, df: pd.DataFrame) -> List[Dict]:
+    def _process_all_tickets(self, df: pd.DataFrame, processor: TicketProcessor) -> List[Dict]:
         """Process all tickets in the dataframe"""
-        # Group by ticket ID
         grouped = df.groupby('Zendesk Tickets ID')
-        
         summaries = []
         total_tickets = len(grouped)
         
         for i, (ticket_id, ticket_comments) in enumerate(grouped):
             logger.info(f"Processing ticket {i+1}/{total_tickets}: {ticket_id}")
-            
-            # Process comments
-            ticket_data = self.processor.process_ticket_comments(ticket_comments)
-            
-            # Summarize with LLM
-            summary = self.processor.summarize_ticket(ticket_data)
-            
-            # Try to extract author email from comments
+            ticket_data = processor.process_ticket_comments(ticket_comments)
+            summary = processor.summarize_ticket(ticket_data)
             summary['author_email'] = self._extract_author_email(ticket_comments)
-            
             summaries.append(summary)
         
         return summaries
@@ -696,18 +597,46 @@ class WhatfixTicketAnalyzer:
         """Extract author email from ticket comments"""
         for _, row in ticket_df.iterrows():
             body = str(row['Zendesk Comments Body'])
-            # Look for email pattern
             email_match = re.search(r'Email:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', body)
             if email_match:
                 return email_match.group(1)
         return 'Not available'
 
+
+class DiagnosticsAnalysisTool(BaseTool):
+    name: str = "Diagnostics Analysis Tool"
+    description: str = "Analyzes a list of ticket summaries for diagnostics compatibility and returns a detailed analysis."
+
+    def _run(self, ticket_summaries: List[Dict]) -> Dict:
+        analyzer = DiagnosticsAnalyzer()
+        diagnostics_analysis = analyzer.analyze_all_tickets(ticket_summaries)
+        return diagnostics_analysis
+
+
+class ReportingTool(BaseTool):
+    name: str = "Reporting Tool"
+    description: str = "Compiles the final report from ticket summaries and diagnostics analysis, including an outreach list."
+
+    def _run(self, ticket_summaries: List[Dict], diagnostics_analysis: Dict, csv_path: str, llm_provider: str) -> Dict:
+        results = {
+            'metadata': {
+                'analyzed_at': datetime.now().isoformat(),
+                'file_path': csv_path,
+                'llm_provider': llm_provider,
+            },
+            'ticket_summaries': ticket_summaries,
+            'diagnostics_analysis': diagnostics_analysis,
+            'author_outreach_list': self._compile_outreach_list(
+                ticket_summaries, 
+                diagnostics_analysis['diagnostics_compatible_tickets']
+            )
+        }
+        return results
+
     def _compile_outreach_list(self, summaries: List[Dict], compatible_tickets: List[Dict]) -> List[Dict]:
         """Compile list of authors to reach out to about diagnostics"""
         outreach_list = []
         compatible_ids = {t['ticket_id'] for t in compatible_tickets}
-        print("Printing summaries from compile_outreach_list method")
-        print(summaries)
         for summary in summaries:
             if summary['ticket_id'] in compatible_ids and summary['author_email'] != 'Not available':
                 outreach_list.append({
@@ -721,96 +650,3 @@ class WhatfixTicketAnalyzer:
                 })
         
         return outreach_list
-
-    def _save_results(self, results: Dict, output_dir: str):
-        """Save analysis results to files"""
-        output_path = Path(output_dir)
-        output_path.mkdir(exist_ok=True)
-        
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        
-        # Save complete results
-        results_file = output_path / f'ticket_analysis_{timestamp}.json'
-        with open(results_file, 'w') as f:
-            json.dump(results, f, indent=2, cls=NumpyEncoder)
-        logger.info(f"Saved complete results to {results_file}")
-        
-        # Save summary report
-        report = {
-            'summary': results['diagnostics_analysis']['summary'],
-            'recommendations': results['diagnostics_analysis']['recommendations'],
-            'author_outreach_count': len(results['author_outreach_list'])
-        }
-        
-        report_file = output_path / f'summary_report_{timestamp}.json'
-        with open(report_file, 'w') as f:
-            json.dump(report, f, indent=2, cls=NumpyEncoder)
-        logger.info(f"Saved summary report to {report_file}")
-        
-        # Save outreach list as CSV for easy use
-        if results['author_outreach_list']:
-            outreach_df = pd.DataFrame(results['author_outreach_list'])
-            outreach_file = output_path / f'diagnostics_outreach_{timestamp}.csv'
-            outreach_df.to_csv(outreach_file, index=False)
-            logger.info(f"Saved outreach list to {outreach_file}")
-
-
-# ============================================================================
-# SECTION 5: EXAMPLE USAGE AND TESTING
-# ============================================================================
-
-def main():
-    """Example usage of the WhatfixTicketAnalyzer"""
-    
-    print("=== Whatfix Support Ticket Analyzer ===\n")
-    
-    # Initialize analyzer (using mock provider for demonstration)
-    analyzer = WhatfixTicketAnalyzer(llm_provider='gemini')
-    
-    # Analyze the CSV file
-    try:
-        results = analyzer.analyze_csv(
-            csv_path='/Users/reehanahmed/Downloads/zendesk_reselection_tickets_limited.csv',
-            output_dir='ticket_analysis_output'
-        )
-        
-        # Print summary
-        print("\n=== Analysis Summary ===")
-        print(f"Total tickets analyzed: {results['diagnostics_analysis']['summary']['total_tickets']}")
-        print(f"Diagnostics compatible: {results['diagnostics_analysis']['summary']['diagnostics_compatible_count']} "
-              f"({results['diagnostics_analysis']['summary']['diagnostics_compatible_percentage']})")
-        print(f"Complex issues: {results['diagnostics_analysis']['summary']['complex_issues_count']}")
-        
-        # Print top categories
-        print("\n=== Top Issue Categories ===")
-        categories = results['diagnostics_analysis']['category_distribution']
-        for category, count in sorted(categories.items(), key=lambda x: x[1], reverse=True)[:5]:
-            print(f"- {category}: {count} tickets")
-        
-        # Print recommendations
-        print("\n=== Diagnostics Recommendations ===")
-        for i, rec in enumerate(results['diagnostics_analysis']['recommendations'], 1):
-            print(f"\n{i}. {rec['type']}: {rec['recommendation']}")
-            print(f"   Reason: {rec['reason']}")
-        
-        # Print sample compatible ticket
-        if results['diagnostics_analysis']['diagnostics_compatible_tickets']:
-            sample = results['diagnostics_analysis']['diagnostics_compatible_tickets'][0]
-            print("\n=== Sample Diagnostics-Compatible Ticket ===")
-            print(f"Ticket ID: {sample['ticket_id']}")
-            print(f"Compatibility Score: {sample['compatibility_score']}")
-            print(f"Recommendation: {sample['recommendation']}")
-        
-        # Print outreach summary
-        print(f"\n=== Author Outreach ===")
-        print(f"Authors to contact about diagnostics: {len(results['author_outreach_list'])}")
-        
-        print("\n✓ Analysis complete! Check 'ticket_analysis_output' directory for detailed results.")
-        
-    except Exception as e:
-        logger.error(f"Analysis failed: {str(e)}")
-        raise
-
-
-if __name__ == "__main__":
-    main()
