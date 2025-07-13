@@ -9,3 +9,4 @@ python-multipart==0.0.6
 pydantic>=2.6.0
 crewai==0.28.8
 crewai-tools==0.1.6
+langchain-google-genai==0.0.4

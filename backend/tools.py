@@ -136,25 +136,36 @@ class GeminiAIProvider(LLMProvider):
     
     def summarize_conversation(self, messages: List[str], system_prompt: str) -> str:
         conversation = "\n\n".join([f"Comment {i+1}: {msg}" for i, msg in enumerate(messages)])
-        
+    
         # Combine system prompt and conversation
         full_prompt = f"{system_prompt}\n\nConversation:\n{conversation}"
         
         response = self.model.generate_content(
             full_prompt,
-            generation_config= genai.types.GenerationConfig(
+            generation_config=genai.types.GenerationConfig(
                 temperature=0.3,
-                max_output_tokens=1000,
+                max_output_tokens=10000,
             )
         )
-        # Try to extract from candidates/parts if available
-        if hasattr(response, 'candidates') and response.candidates:
+        
+        # Extract the text from response
+        if hasattr(response, 'text'):
+            result = response.text
+        elif hasattr(response, 'candidates') and response.candidates:
+            # Try to extract from candidates/parts if available
             for candidate in response.candidates:
                 if hasattr(candidate, 'content') and candidate.content.parts:
                     result = "".join(part.text for part in candidate.content.parts if hasattr(part, 'text'))
-                    return result
-        # Fallback: return a message or empty string
-        return "[No valid response from Gemini API]"
+                    break
+            else:
+                result = "[No valid response from Gemini API]"
+        else:
+            result = "[No valid response from Gemini API]"
+        
+        # Clean up the response - remove any markdown code blocks
+        result = extract_json_from_code_block(result)
+    
+        return result
 
 
 # ============================================================================
