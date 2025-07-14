@@ -7,17 +7,22 @@ from .tasks import TicketTasks
 import os
 
 class TicketAnalysisCrew:
-    def __init__(self, csv_path: str, llm_provider: str, api_key: str):
+    def __init__(self, csv_path: str, llm_provider: str = None, api_key: str = None):
         self.csv_path = csv_path
-        self.llm_provider = llm_provider
-        self.api_key = api_key
         
-        # Set environment variable for Gemini
-        if llm_provider.lower() == 'gemini' and api_key:
-            os.environ["GEMINI_API_KEY"] = api_key
+        # Set environment variables for LLM configuration
+        # Use provided values or fall back to environment defaults
+        self.llm_provider = llm_provider or os.getenv('LLM_PROVIDER', 'gemini')
+        self.api_key = api_key or os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
+        
+        # Set environment variables for tools to use
+        os.environ['LLM_PROVIDER'] = self.llm_provider
+        if self.api_key:
+            os.environ['GOOGLE_API_KEY'] = self.api_key
+            os.environ['GEMINI_API_KEY'] = self.api_key
         
         # Initialize agents with API key
-        self.agents = TicketAgents(api_key=api_key)
+        self.agents = TicketAgents(api_key=self.api_key)
         self.tasks = TicketTasks()
 
     def run(self):

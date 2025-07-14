@@ -6,10 +6,10 @@ import SummaryTable from './components/SummaryTable';
 import OutreachTable from './components/OutreachTable';
 import { AnalysisProgress, AnalysisResults } from './types';
 import axios from 'axios';
-import { FileText, AlertCircle } from 'lucide-react';
+import { FileText, AlertCircle, Info } from 'lucide-react';
 
 function App() {
-  const [selectedProvider, setSelectedProvider] = useState('gemini');
+  const [selectedProvider, setSelectedProvider] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisId, setAnalysisId] = useState<string | null>(null);
@@ -18,11 +18,6 @@ function App() {
   const [error, setError] = useState<string | null>(null);
 
   const handleFileUpload = async (file: File) => {
-    if (!apiKey) {
-      setError('Please enter an API key for the selected provider');
-      return;
-    }
-
     setError(null);
     setIsAnalyzing(true);
     setResults(null);
@@ -30,8 +25,14 @@ function App() {
 
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('llm_provider', selectedProvider);
-    formData.append('api_key', apiKey);
+    
+    // Only append if values are provided
+    if (selectedProvider) {
+      formData.append('llm_provider', selectedProvider);
+    }
+    if (apiKey) {
+      formData.append('api_key', apiKey);
+    }
 
     try {
       const response = await axios.post('/api/analyze', formData, {
@@ -88,7 +89,7 @@ function App() {
           <div className="flex items-center gap-3 mb-2">
             <FileText className="h-8 w-8 text-blue-600" />
             <h1 className="text-3xl font-bold text-gray-900">
-            Heimdall - Spot everything!
+              Heimdall - Spot everything!
             </h1>
           </div>
           <p className="text-gray-600">
@@ -98,7 +99,20 @@ function App() {
 
         {/* Configuration Section */}
         <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-          <h2 className="text-lg font-semibold mb-4">Configuration</h2>
+          <div className="flex items-start gap-2 mb-4">
+            <h2 className="text-lg font-semibold">Configuration</h2>
+            <span className="text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded">Optional</span>
+          </div>
+          
+          {/* Info box about default configuration */}
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4 flex items-start gap-3">
+            <Info className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
+            <div className="text-sm text-blue-800">
+              <p className="font-medium mb-1">Default Configuration</p>
+              <p>If you don't specify a provider or API key, the system will use the default Google Gemini API key configured in the environment.</p>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <ProviderSelector
               selectedProvider={selectedProvider}
@@ -106,13 +120,13 @@ function App() {
             />
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                API Key
+                API Key <span className="text-gray-500 font-normal">(Optional)</span>
               </label>
               <input
                 type="password"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                placeholder={`Enter your ${selectedProvider.toUpperCase()} API key`}
+                placeholder={selectedProvider ? `Enter your ${selectedProvider.toUpperCase()} API key` : "Leave empty to use default"}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
@@ -151,10 +165,12 @@ function App() {
               <SummaryTable results={results} />
             </div>
 
-            <div className="bg-white rounded-lg shadow-sm p-6">
-              <h2 className="text-lg font-semibold mb-4">Diagnostics Outreach List</h2>
-              <OutreachTable outreachList={results.author_outreach_list} />
-            </div>
+            {results.author_outreach_list && results.author_outreach_list.length > 0 && (
+              <div className="bg-white rounded-lg shadow-sm p-6">
+                <h2 className="text-lg font-semibold mb-4">Diagnostics Outreach List</h2>
+                <OutreachTable outreachList={results.author_outreach_list} />
+              </div>
+            )}
           </div>
         )}
       </div>

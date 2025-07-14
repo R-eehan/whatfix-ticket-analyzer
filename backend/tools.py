@@ -15,6 +15,7 @@ import hashlib
 import google.generativeai as genai
 import numpy as np
 from crewai.tools import BaseTool
+from json import JSONEncoder
 
 # Configure logging
 logging.basicConfig(
@@ -539,7 +540,20 @@ class TicketAnalysisTool(BaseTool):
     name: str = "Ticket Analysis Tool"
     description: str = "Analyzes a CSV file of support tickets, processes them, and returns a list of ticket summaries."
 
-    def _run(self, csv_path: str, llm_provider: str, api_key: str) -> List[Dict]:
+    def _run(self, csv_path: str) -> str:
+        """
+        Run the ticket analysis tool.
+        
+        Args:
+            csv_path: Path to the CSV file
+        
+        Returns:
+            JSON string of the analysis results
+        """
+        # Get LLM configuration from environment or use defaults
+        llm_provider = os.getenv('LLM_PROVIDER', 'gemini')
+        api_key = os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
+        
         # Initialize LLM provider
         if llm_provider == 'openai':
             provider = OpenAIProvider(api_key)
@@ -557,12 +571,31 @@ class TicketAnalysisTool(BaseTool):
             raise FileNotFoundError(f"CSV file not found: {csv_path}")
         
         df = pd.read_csv(csv_path)
+        # Debug prints
+        print("\n=== DataFrame Column Types ===")
+        print(df.dtypes)
+        print("\n=== Sample Values and Their Types ===")
+        print(f"Zendesk Tickets ID (first row): {df['Zendesk Tickets ID'].iloc[0]} (Type: {type(df['Zendesk Tickets ID'].iloc[0])})")
+        print(f"Zendesk Comments ID (first row): {df['Zendesk Comments ID'].iloc[0]} (Type: {type(df['Zendesk Comments ID'].iloc[0])})")
         self._validate_csv_columns(df)
         df = self._clean_dataframe(df)
         
         # Process all tickets
         summaries = self._process_all_tickets(df, processor)
-        return summaries
+        
+        # Add metadata
+        result = {
+            'metadata': {
+                'analyzed_at': datetime.now().isoformat(),
+                'file_path': csv_path,
+                'llm_provider': llm_provider,
+                'total_raw_rows': len(df),
+                'unique_tickets': len(summaries)
+            },
+            'ticket_summaries': summaries
+        }
+        
+        return json.dumps(result, cls=NumpyJSONEncoder)  # Use the custom encoder here
 
     def _validate_csv_columns(self, df: pd.DataFrame):
         """Validate required columns exist"""
@@ -618,31 +651,80 @@ class DiagnosticsAnalysisTool(BaseTool):
     name: str = "Diagnostics Analysis Tool"
     description: str = "Analyzes a list of ticket summaries for diagnostics compatibility and returns a detailed analysis."
 
-    def _run(self, ticket_summaries: List[Dict]) -> Dict:
-        analyzer = DiagnosticsAnalyzer()
-        diagnostics_analysis = analyzer.analyze_all_tickets(ticket_summaries)
-        return diagnostics_analysis
+    def _run(self, ticket_summaries_json: str) -> str:
+        """
+        Run the diagnostics analysis tool.
+        
+        Args:
+            ticket_summaries_json: JSON string containing ticket summaries
+        
+        Returns:
+            JSON string of the diagnostics analysis
+        """
+        # Add debug logging at the start of _run method
+        logger.debug("=== Diagnostics Analysis Debug ===")
+        logger.debug(f"Received ticket_summaries_json type: {type(ticket_summaries_json)}")
+        logger.debug(f"Received data: {ticket_summaries_json[:200]}...")  # Show first 200 chars
+        # Parse the input JSON
+        try:
+            data = json.loads(ticket_summaries_json)
+            logger.debug(f"Parsed data type: {type(data)}")
+            logger.debug(f"Parsed data structure: {str(data)[:200]}...")
+            # Handle both dictionary and list inputs
+            ticket_summaries = data.get('ticket_summaries', []) if isinstance(data, dict) else data
+            
+            if not ticket_summaries:
+                raise ValueError("No ticket summaries found in input")
+            
+            analyzer = DiagnosticsAnalyzer()
+            diagnostics_analysis = analyzer.analyze_all_tickets(ticket_summaries)
+            
+            return json.dumps(diagnostics_analysis)
+        except json.JSONDecodeError:
+            raise ValueError("Invalid JSON input for ticket summaries")
+        except Exception as e:
+            raise ValueError(f"Error analyzing tickets: {str(e)}")
 
 
 class ReportingTool(BaseTool):
     name: str = "Reporting Tool"
     description: str = "Compiles the final report from ticket summaries and diagnostics analysis, including an outreach list."
 
-    def _run(self, ticket_summaries: List[Dict], diagnostics_analysis: Dict, csv_path: str, llm_provider: str) -> Dict:
+    def _run(self, analysis_data: str) -> str:
+        """
+        Run the reporting tool.
+        
+        Args:
+            analysis_data: JSON string containing both ticket summaries and diagnostics analysis
+        
+        Returns:
+            JSON string of the final report
+        """
+        # Parse the input data
+        try:
+            data = json.loads(analysis_data)
+            ticket_data = data.get('ticket_data', {})
+            diagnostics_data = data.get('diagnostics_data', {})
+            
+            ticket_summaries = ticket_data.get('ticket_summaries', [])
+            metadata = ticket_data.get('metadata', {})
+            diagnostics_analysis = diagnostics_data
+            
+        except (json.JSONDecodeError, KeyError) as e:
+            raise ValueError(f"Invalid input data for reporting: {str(e)}")
+        
+        # Compile the final report
         results = {
-            'metadata': {
-                'analyzed_at': datetime.now().isoformat(),
-                'file_path': csv_path,
-                'llm_provider': llm_provider,
-            },
+            'metadata': metadata,
             'ticket_summaries': ticket_summaries,
             'diagnostics_analysis': diagnostics_analysis,
             'author_outreach_list': self._compile_outreach_list(
                 ticket_summaries, 
-                diagnostics_analysis['diagnostics_compatible_tickets']
+                diagnostics_analysis.get('diagnostics_compatible_tickets', [])
             )
         }
-        return results
+        
+        return json.dumps(results)
 
     def _compile_outreach_list(self, summaries: List[Dict], compatible_tickets: List[Dict]) -> List[Dict]:
         """Compile list of authors to reach out to about diagnostics"""
@@ -661,3 +743,13 @@ class ReportingTool(BaseTool):
                 })
         
         return outreach_list
+
+class NumpyJSONEncoder(JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)

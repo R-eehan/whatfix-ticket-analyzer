@@ -3,13 +3,12 @@ FastAPI backend for Whatfix Ticket Analyzer
 """
 import os
 import logging
+import json
 
 # --- GLOBAL LLM CONFIGURATION ---
-# This is the most robust way to ensure the correct LLM and API key are used by all components.
-# It configures the underlying 'litellm' library that crewAI uses.
-os.environ["LITELLM_MODEL"] = "gemini/gemini-2.5"
-if "GOOGLE_API_KEY" in os.environ:
-    os.environ["LITELLM_API_KEY"] = os.environ["GOOGLE_API_KEY"]
+# Set default LLM provider if not already set
+if "LLM_PROVIDER" not in os.environ:
+    os.environ["LLM_PROVIDER"] = "gemini"
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -56,8 +55,8 @@ async def root():
 async def analyze_tickets(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    llm_provider: str = "gemini",
-    api_key: str = ""
+    llm_provider: Optional[str] = None,
+    api_key: Optional[str] = None
 ):
     contents = await file.read()
     if not file.filename.endswith('.csv'):
@@ -72,20 +71,24 @@ async def analyze_tickets(
         tmp_file.write(contents)
         tmp_file_path = tmp_file.name
     
+    # Pass optional parameters
     background_tasks.add_task(run_analysis, analysis_id, tmp_file_path, llm_provider, api_key)
     
     return {"analysis_id": analysis_id, "message": "Analysis started"}
 
-async def run_analysis(analysis_id: str, file_path: str, llm_provider: str, api_key: str):
+async def run_analysis(analysis_id: str, file_path: str, llm_provider: Optional[str], api_key: Optional[str]):
     try:
-        # The API key from the UI is now used to set the environment variable if it's not already set.
-        if api_key:
-            os.environ["GOOGLE_API_KEY"] = api_key
-            os.environ["LITELLM_API_KEY"] = api_key
-
+        # Create crew with optional parameters
         crew = TicketAnalysisCrew(file_path, llm_provider, api_key)
         loop = asyncio.get_running_loop()
-        results = await loop.run_in_executor(executor, crew.run)
+        results_str = await loop.run_in_executor(executor, crew.run)
+        
+        # Parse the JSON string result
+        try:
+            results = json.loads(results_str)
+        except json.JSONDecodeError:
+            # If it's not valid JSON, wrap it in a results object
+            results = {"raw_output": results_str}
         
         analysis_progress[analysis_id]["status"] = "completed"
         analysis_progress[analysis_id]["results"] = results

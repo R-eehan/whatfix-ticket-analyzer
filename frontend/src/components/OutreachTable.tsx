@@ -6,7 +6,7 @@ interface OutreachTableProps {
   outreachList: AuthorOutreach[];
 }
 
-const OutreachTable: React.FC<OutreachTableProps> = ({ outreachList }) => {
+const OutreachTable: React.FC<OutreachTableProps> = ({ outreachList = [] }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
 
@@ -146,10 +146,10 @@ const OutreachTable: React.FC<OutreachTableProps> = ({ outreachList }) => {
                     {item.author_email}
                   </a>
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate" title={item.issue_summary}>
+                <td className="px-6 py-4 text-sm text-gray-500 whitespace-normal">
                   {item.issue_summary}
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate" title={item.resolution_summary}>
+                <td className="px-6 py-4 text-sm text-gray-500 whitespace-normal">
                   {item.resolution_summary}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">

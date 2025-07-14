@@ -6,6 +6,7 @@ interface ProviderSelectorProps {
 }
 
 const providers = [
+  { value: '', label: 'Use Default Provider', icon: '🔧' },
   { value: 'gemini', label: 'Google Gemini', icon: '🤖' },
   { value: 'openai', label: 'OpenAI GPT-4', icon: '🧠' },
   { value: 'anthropic', label: 'Anthropic Claude', icon: '🎯' },
@@ -19,7 +20,7 @@ const ProviderSelector: React.FC<ProviderSelectorProps> = ({
   return (
     <div>
       <label className="block text-sm font-medium text-gray-700 mb-2">
-        LLM Provider
+        LLM Provider <span className="text-gray-500 font-normal">(Optional)</span>
       </label>
       <select
         value={selectedProvider}
@@ -33,7 +34,9 @@ const ProviderSelector: React.FC<ProviderSelectorProps> = ({
         ))}
       </select>
       <p className="mt-1 text-xs text-gray-500">
-        {selectedProvider === 'mock' 
+        {selectedProvider === '' 
+          ? 'Uses the default provider configured in your environment'
+          : selectedProvider === 'mock' 
           ? 'Mock provider uses simulated data - no API key required'
           : `Requires ${providers.find(p => p.value === selectedProvider)?.label} API key`
         }
