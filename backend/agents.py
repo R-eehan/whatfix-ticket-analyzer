@@ -23,7 +23,7 @@ class TicketAgents:
         self.llm = LLM(
             model="gemini/gemini-2.5-pro",  # Correct format for litellm
             api_key=self.api_key,
-            temperature=0.7
+            temperature=0.1
         )
     
     def ticket_analysis_agent(self):
