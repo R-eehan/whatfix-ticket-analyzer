@@ -10,3 +10,8 @@ pydantic>=2.6.0
 crewai==0.28.8
 crewai-tools==0.1.6
 langchain-google-genai==0.0.4
+# Arize tracing dependencies - added for LLM observability
+openinference-instrumentation-crewai
+openinference-instrumentation-langchain
+openinference-instrumentation-litellm
+arize-otel

@@ -1,5 +1,5 @@
 """
-FastAPI backend for Whatfix Ticket Analyzer
+FastAPI backend for Whatfix Ticket Analyzer with Arize LLM Observability
 """
 import os
 import logging
@@ -22,10 +22,28 @@ import numpy as np
 # Import the crew
 from .crew import TicketAnalysisCrew
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Import Arize tracing setup - for LLM observability and monitoring
+from .tracing import setup_arize_tracing, get_tracing_status
+
+# Setup logging with enhanced formatting for debugging
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
+)
 
 app = FastAPI(title="Whatfix Ticket Analyzer API")
+
+# Initialize Arize tracing for LLM observability
+# This sets up comprehensive monitoring of CrewAI agents, LLM calls, and workflow execution
+logger = logging.getLogger(__name__)
+logger.info("Initializing Arize tracing for LLM observability...")
+
+tracing_success = setup_arize_tracing()
+if tracing_success:
+    logger.info("✅ Arize tracing initialized successfully - LLM calls will be monitored")
+else:
+    logger.warning("⚠️ Arize tracing not initialized - running without LLM observability")
+    logger.info("To enable tracing, set ARIZE_SPACE_ID and ARIZE_API_KEY environment variables")
 
 # Configure CORS
 app.add_middleware(
@@ -49,7 +67,30 @@ class AnalysisProgress(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"message": "Whatfix Ticket Analyzer API", "version": "1.0.0"}
+    """
+    Root endpoint with system status including tracing information.
+    """
+    tracing_status = get_tracing_status()
+    return {
+        "message": "Whatfix Ticket Analyzer API", 
+        "version": "1.0.0",
+        "tracing": tracing_status
+    }
+
+@app.get("/health")
+async def health_check():
+    """
+    Health check endpoint with detailed system status.
+    """
+    tracing_status = get_tracing_status()
+    return {
+        "status": "healthy",
+        "services": {
+            "api": "running",
+            "llm_tracing": "enabled" if tracing_status["enabled"] else "disabled"
+        },
+        "tracing": tracing_status
+    }
 
 @app.post("/analyze")
 async def analyze_tickets(
@@ -77,29 +118,72 @@ async def analyze_tickets(
     return {"analysis_id": analysis_id, "message": "Analysis started"}
 
 async def run_analysis(analysis_id: str, file_path: str, llm_provider: Optional[str], api_key: Optional[str]):
+    """
+    Execute ticket analysis with comprehensive tracing and error handling.
+    
+    This function orchestrates the entire CrewAI workflow with full observability
+    through Arize tracing, capturing all agent interactions and LLM calls.
+    """
+    analysis_logger = logging.getLogger(f"analysis.{analysis_id}")
+    analysis_logger.info(f"🚀 Starting analysis {analysis_id} with LLM provider: {llm_provider or 'default'}")
+    
+    # Log tracing status for this analysis
+    tracing_status = get_tracing_status()
+    analysis_logger.info(f"📊 Tracing status: {'enabled' if tracing_status['enabled'] else 'disabled'}")
+    
     try:
-        # Create crew with optional parameters
+        # Create crew with optional parameters - this will be traced by Arize
+        analysis_logger.info("🔧 Initializing TicketAnalysisCrew...")
         crew = TicketAnalysisCrew(file_path, llm_provider, api_key)
+        analysis_logger.info("✅ TicketAnalysisCrew initialized successfully")
+        
+        # Run the crew workflow in executor - all agent interactions will be traced
+        analysis_logger.info("🎯 Starting CrewAI workflow execution...")
         loop = asyncio.get_running_loop()
         results_str = await loop.run_in_executor(executor, crew.run)
+        analysis_logger.info("✅ CrewAI workflow completed successfully")
         
-        # Parse the JSON string result
+        # Parse the JSON string result with enhanced error handling
+        analysis_logger.info("📋 Processing analysis results...")
         try:
             results = json.loads(results_str)
-        except json.JSONDecodeError:
+            analysis_logger.info(f"✅ Results parsed successfully - found {len(results.get('ticket_summaries', []))} ticket summaries")
+        except json.JSONDecodeError as json_error:
+            analysis_logger.warning(f"⚠️ JSON parsing failed: {json_error}")
+            analysis_logger.info("🔄 Wrapping raw output in results object")
             # If it's not valid JSON, wrap it in a results object
-            results = {"raw_output": results_str}
+            results = {
+                "raw_output": results_str,
+                "parse_error": str(json_error),
+                "timestamp": asyncio.get_event_loop().time()
+            }
         
+        # Update progress with success status
         analysis_progress[analysis_id]["status"] = "completed"
         analysis_progress[analysis_id]["results"] = results
+        analysis_logger.info(f"🎉 Analysis {analysis_id} completed successfully")
         
     except Exception as e:
-        logging.error(f"An error occurred during analysis for ID {analysis_id}:", exc_info=True)
+        # Enhanced error logging with full stack trace
+        analysis_logger.error(f"❌ Analysis {analysis_id} failed with error: {str(e)}")
+        analysis_logger.error(f"Error type: {type(e).__name__}")
+        analysis_logger.error("Full stack trace:", exc_info=True)
+        
+        # Store error information
         analysis_progress[analysis_id]["status"] = "error"
         analysis_progress[analysis_id]["error"] = str(e)
+        analysis_progress[analysis_id]["error_type"] = type(e).__name__
+        
     finally:
+        # Cleanup temporary file with logging
         if os.path.exists(file_path):
-            os.remove(file_path)
+            try:
+                os.remove(file_path)
+                analysis_logger.info(f"🧹 Temporary file cleaned up: {file_path}")
+            except Exception as cleanup_error:
+                analysis_logger.warning(f"⚠️ Failed to cleanup temporary file {file_path}: {cleanup_error}")
+        else:
+            analysis_logger.warning(f"⚠️ Temporary file not found for cleanup: {file_path}")
 
 def convert_numpy(obj):
     if isinstance(obj, np.integer): return int(obj)

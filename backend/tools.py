@@ -136,37 +136,62 @@ class GeminiAIProvider(LLMProvider):
             raise ImportError("Please install google-generativeai: pip install google-generativeai")
     
     def summarize_conversation(self, messages: List[str], system_prompt: str) -> str:
+        """
+        Summarize conversation using Gemini AI with enhanced logging for tracing.
+        
+        This method makes LLM calls that will be automatically traced by Arize,
+        providing visibility into token usage, latency, and response quality.
+        """
+        logger.debug(f"🤖 Starting Gemini conversation summarization for {len(messages)} messages")
+        
         conversation = "\n\n".join([f"Comment {i+1}: {msg}" for i, msg in enumerate(messages)])
     
         # Combine system prompt and conversation
         full_prompt = f"{system_prompt}\n\nConversation:\n{conversation}"
         
-        response = self.model.generate_content(
-            full_prompt,
-            generation_config=genai.types.GenerationConfig(
-                temperature=0.3,
-                max_output_tokens=10000,
-            )
-        )
+        logger.debug(f"📝 Prompt length: {len(full_prompt)} characters")
+        logger.debug("🚀 Calling Gemini API...")
         
-        # Extract the text from response
-        if hasattr(response, 'text'):
-            result = response.text
-        elif hasattr(response, 'candidates') and response.candidates:
-            # Try to extract from candidates/parts if available
-            for candidate in response.candidates:
-                if hasattr(candidate, 'content') and candidate.content.parts:
-                    result = "".join(part.text for part in candidate.content.parts if hasattr(part, 'text'))
-                    break
+        try:
+            response = self.model.generate_content(
+                full_prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.3,
+                    max_output_tokens=10000,
+                )
+            )
+            
+            logger.debug("✅ Gemini API call completed successfully")
+            
+            # Extract the text from response with enhanced error handling
+            if hasattr(response, 'text'):
+                result = response.text
+                logger.debug(f"📤 Response text extracted (length: {len(result)})")
+            elif hasattr(response, 'candidates') and response.candidates:
+                logger.debug("🔍 Extracting from candidates/parts...")
+                # Try to extract from candidates/parts if available
+                for candidate in response.candidates:
+                    if hasattr(candidate, 'content') and candidate.content.parts:
+                        result = "".join(part.text for part in candidate.content.parts if hasattr(part, 'text'))
+                        logger.debug(f"📤 Response extracted from candidates (length: {len(result)})")
+                        break
+                else:
+                    result = "[No valid response from Gemini API]"
+                    logger.warning("⚠️ No valid parts found in candidates")
             else:
                 result = "[No valid response from Gemini API]"
-        else:
-            result = "[No valid response from Gemini API]"
+                logger.warning("⚠️ No text or candidates found in response")
+            
+            # Clean up the response - remove any markdown code blocks
+            result = extract_json_from_code_block(result)
+            logger.debug("🧹 Response cleaned and processed")
         
-        # Clean up the response - remove any markdown code blocks
-        result = extract_json_from_code_block(result)
-    
-        return result
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Gemini API call failed: {str(e)}")
+            logger.error(f"Error type: {type(e).__name__}")
+            raise
 
 
 # ============================================================================
@@ -542,7 +567,10 @@ class TicketAnalysisTool(BaseTool):
 
     def _run(self, csv_path: str) -> str:
         """
-        Run the ticket analysis tool.
+        Run the ticket analysis tool with comprehensive tracing and logging.
+        
+        This method processes CSV files containing support tickets, using LLM providers
+        to extract insights. All LLM calls are automatically traced by Arize.
         
         Args:
             csv_path: Path to the CSV file
@@ -550,52 +578,82 @@ class TicketAnalysisTool(BaseTool):
         Returns:
             JSON string of the analysis results
         """
+        logger.info(f"🎯 Starting TicketAnalysisTool execution for: {csv_path}")
+        
         # Get LLM configuration from environment or use defaults
         llm_provider = os.getenv('LLM_PROVIDER', 'gemini')
         api_key = os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
         
-        # Initialize LLM provider
+        logger.info(f"🔧 LLM Provider: {llm_provider}")
+        logger.info(f"🔑 API Key: {'configured' if api_key else 'not configured'}")
+        
+        # Initialize LLM provider with tracing context
+        logger.info("🚀 Initializing LLM provider...")
         if llm_provider == 'openai':
             provider = OpenAIProvider(api_key)
+            logger.info("✅ OpenAI provider initialized")
         elif llm_provider == 'anthropic':
             provider = AnthropicProvider(api_key)
+            logger.info("✅ Anthropic provider initialized")
         elif llm_provider == 'gemini':
             provider = GeminiAIProvider(api_key)
+            logger.info("✅ Gemini provider initialized")
         else:
             provider = MockProvider()
+            logger.info("✅ Mock provider initialized (no API calls will be made)")
         
+        logger.info("🔧 Creating TicketProcessor...")
         processor = TicketProcessor(provider)
 
-        # Read and validate CSV
+        # Read and validate CSV with enhanced logging
+        logger.info(f"📂 Reading CSV file: {csv_path}")
         if not Path(csv_path).exists():
+            logger.error(f"❌ CSV file not found: {csv_path}")
             raise FileNotFoundError(f"CSV file not found: {csv_path}")
         
         df = pd.read_csv(csv_path)
-        # Debug prints
-        print("\n=== DataFrame Column Types ===")
-        print(df.dtypes)
-        print("\n=== Sample Values and Their Types ===")
-        print(f"Zendesk Tickets ID (first row): {df['Zendesk Tickets ID'].iloc[0]} (Type: {type(df['Zendesk Tickets ID'].iloc[0])})")
-        print(f"Zendesk Comments ID (first row): {df['Zendesk Comments ID'].iloc[0]} (Type: {type(df['Zendesk Comments ID'].iloc[0])})")
+        logger.info(f"✅ CSV loaded successfully - {len(df)} rows, {len(df.columns)} columns")
+        
+        # Debug information for troubleshooting
+        logger.debug("=== DataFrame Column Types ===")
+        logger.debug(f"DataFrame dtypes: {df.dtypes.to_dict()}")
+        logger.debug("=== Sample Values and Their Types ===")
+        if len(df) > 0:
+            logger.debug(f"Zendesk Tickets ID (first row): {df['Zendesk Tickets ID'].iloc[0]} (Type: {type(df['Zendesk Tickets ID'].iloc[0])})")
+            logger.debug(f"Zendesk Comments ID (first row): {df['Zendesk Comments ID'].iloc[0]} (Type: {type(df['Zendesk Comments ID'].iloc[0])})")
+        
+        logger.info("🔍 Validating CSV columns...")
         self._validate_csv_columns(df)
+        logger.info("✅ CSV validation passed")
+        
+        logger.info("🧹 Cleaning DataFrame...")
         df = self._clean_dataframe(df)
+        logger.info(f"✅ DataFrame cleaned - {len(df)} rows remaining")
         
-        # Process all tickets
+        # Process all tickets with tracing
+        logger.info("🎯 Processing all tickets (this will involve LLM calls)...")
         summaries = self._process_all_tickets(df, processor)
+        logger.info(f"✅ Ticket processing completed - {len(summaries)} tickets analyzed")
         
-        # Add metadata
+        # Add metadata with enhanced information
+        logger.info("📋 Compiling final results...")
         result = {
             'metadata': {
                 'analyzed_at': datetime.now().isoformat(),
                 'file_path': csv_path,
                 'llm_provider': llm_provider,
                 'total_raw_rows': len(df),
-                'unique_tickets': len(summaries)
+                'unique_tickets': len(summaries),
+                'processing_time': datetime.now().isoformat()
             },
             'ticket_summaries': summaries
         }
         
-        return json.dumps(result, cls=NumpyJSONEncoder)  # Use the custom encoder here
+        logger.info("📤 Serializing results to JSON...")
+        json_result = json.dumps(result, cls=NumpyJSONEncoder)
+        logger.info(f"✅ TicketAnalysisTool completed successfully - result size: {len(json_result)} characters")
+        
+        return json_result
 
     def _validate_csv_columns(self, df: pd.DataFrame):
         """Validate required columns exist"""
